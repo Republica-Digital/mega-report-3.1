@@ -12,7 +12,7 @@ import { SentimentSection } from '../components/sections/SentimentSection'
 import { CompetenciaSection } from '../components/sections/CompetenciaSection'
 import { HallazgosSection } from '../components/sections/HallazgosSection'
 import { ProyeccionesSection } from '../components/sections/ProyeccionesSection'
-import { PlatformHistory } from '../components/sections/Historical'
+import { PlatformHistory, CompetenciaHistory } from '../components/sections/Historical'
 import { detectAvailableBuckets } from '../utils/campaigns'
 import { exportDashboardPDF } from '../utils/exportPDF'
 import { exportDashboardData } from '../utils/exportToExcel'
@@ -395,6 +395,36 @@ export function Dashboard() {
                   campanas={data.campanas || []}
                   currentMonth={effectiveMonth}
                   theme={theme}
+                />
+              } />
+
+              <Route path="facebook/competencia/historico" element={
+                <CompetenciaHistory
+                  platform="facebook"
+                  allData={data.competencia || []}
+                  currentMonth={effectiveMonth}
+                  brandId={marcaId}
+                  brandConfig={brandConfig}
+                />
+              } />
+
+              <Route path="instagram/competencia/historico" element={
+                <CompetenciaHistory
+                  platform="instagram"
+                  allData={data.competencia || []}
+                  currentMonth={effectiveMonth}
+                  brandId={marcaId}
+                  brandConfig={brandConfig}
+                />
+              } />
+
+              <Route path="tiktok/competencia/historico" element={
+                <CompetenciaHistory
+                  platform="tiktok"
+                  allData={data.competencia || []}
+                  currentMonth={effectiveMonth}
+                  brandId={marcaId}
+                  brandConfig={brandConfig}
                 />
               } />
 
