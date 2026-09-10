@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react'
-import { BarChart3, Facebook, FileText, Heart, Instagram, TrendingUp, Trophy, Users, Music2 } from 'lucide-react'
+import { BarChart3, Facebook, FileText, Heart, Instagram, LineChart, TrendingUp, Trophy, Users, Music2 } from 'lucide-react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { SectionHeader, EmptyState } from '../ui/SectionHeader'
 import { DataTable } from '../ui/DataTable'
+import { KPICard } from '../ui/KPICard'
 import { PlatformSubnav } from '../ui/PlatformSubnav'
+import { formatMonthLong } from '../../utils/format'
 import {
   COMPETITION_METRICS,
   calculateBenchmarkVariation,
   calculateQuarterBenchmark,
   calculateRanking,
+  calculateShareOfVoice,
   calculateVsBrand,
   formatBenchmarkValue,
   formatCompetitionPercent,
@@ -16,7 +20,7 @@ import {
   normalizePlatformKey,
 } from '../../utils/competitionAnalytics'
 
-const PLATFORM_CONFIG = {
+export const PLATFORM_CONFIG = {
   facebook: { label: 'Facebook', icon: Facebook, accent: '#3b82f6' },
   instagram: { label: 'Instagram', icon: Instagram, accent: '#ec4899' },
   tiktok: { label: 'TikTok', icon: Music2, accent: '#22d3ee' },
@@ -115,6 +119,8 @@ export function CompetenciaSection({
   brandConfig,
   loading,
 }) {
+  const navigate = useNavigate()
+  const { marcaId } = useParams()
   const cfg = PLATFORM_CONFIG[platform] || PLATFORM_CONFIG.facebook
   const [selectedMetric, setSelectedMetric] = useState('seguidores')
 
@@ -158,6 +164,11 @@ export function CompetenciaSection({
       }, {})
   }, [currentBrand])
 
+  const shareOfVoice = useMemo(
+    () => calculateShareOfVoice(currentRows, brandAliases),
+    [currentRows, brandAliases]
+  )
+
   if (loading) {
     return <div className="rounded-2xl skeleton h-96" />
   }
@@ -188,6 +199,59 @@ export function CompetenciaSection({
         subtitle={`Benchmark y ranking competitivo · ${cfg.label}`}
         accentColor={cfg.accent}
       />
+
+      <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `${cfg.accent}18`, border: `1px solid ${cfg.accent}30` }}>
+            <LineChart className="w-4 h-4" style={{ color: cfg.accent }} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">¿Quieres ver la evolución de la competencia?</p>
+            <p className="text-xs text-white/45">Compara a la marca contra los competidores mes a mes, por el KPI que elijas.</p>
+          </div>
+        </div>
+        <button
+          onClick={() => navigate(`/dashboard/${marcaId}/${platform}/competencia/historico`)}
+          className="px-4 py-2.5 rounded-xl text-xs font-semibold text-white border transition hover:scale-[1.01]"
+          style={{ background: `${cfg.accent}18`, borderColor: `${cfg.accent}55` }}
+        >Ver histórico de competencia →</button>
+      </div>
+
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-bold text-white">Participación de mercado</h2>
+            <p className="text-xs text-white/45 mt-1">
+              Qué proporción de la categoría (marca + competidores de {cfg.label}) corresponde a la marca en {formatMonthLong(selectedMonth)}.
+            </p>
+          </div>
+        </div>
+
+        {!shareOfVoice.hasBrand ? (
+          <div className="glass-card rounded-2xl p-6 text-center text-sm text-white/45">
+            No se encontró el registro de la marca en la Competencia de este mes, así que no se puede calcular su participación.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <KPICard
+              title="% de participación en contenido"
+              value={shareOfVoice.postsShare ?? 0}
+              icon={FileText}
+              accentColor={cfg.accent}
+              formatter={v => `${v.toFixed(1)}%`}
+              subtitle={`${formatRankingValue(shareOfVoice.brandPosts, { type: 'number' })} de ${formatRankingValue(shareOfVoice.totalPosts, { type: 'number' })} posts publicados por la categoría`}
+            />
+            <KPICard
+              title="% de participación en interacciones"
+              value={shareOfVoice.interactionShare ?? 0}
+              icon={Heart}
+              accentColor="#ec4899"
+              formatter={v => `${v.toFixed(1)}%`}
+              subtitle={`${formatRankingValue(shareOfVoice.brandInteraction, { type: 'number' })} de ${formatRankingValue(shareOfVoice.totalInteraction, { type: 'number' })} interacciones de la categoría`}
+            />
+          </div>
+        )}
+      </section>
 
       <section className="space-y-4">
         <div className="flex items-end justify-between gap-4 flex-wrap">
