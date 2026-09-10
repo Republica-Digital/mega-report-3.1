@@ -124,16 +124,21 @@ export function formatHistoricalValue(value, format = 'number') {
   return new Intl.NumberFormat('es-MX', { notation: 'compact', maximumFractionDigits: 1 }).format(n)
 }
 
-export function getMetricHighlights(rows = [], key, currentMonth = null) {
+export function getMetricHighlights(rows = [], key, currentMonth = null, better = 'higher') {
   const usable = rows.filter(r => Number.isFinite(Number(r?.[key])) && safeNumber(r[key]) > 0)
   if (!usable.length) return null
 
+  const isLowerBetter = better === 'lower'
   const current = currentMonth ? usable.find(r => r.mes === currentMonth) : usable[usable.length - 1]
-  const best = usable.reduce((winner, row) => safeNumber(row[key]) > safeNumber(winner[key]) ? row : winner, usable[0])
+  const best = usable.reduce((winner, row) => {
+    const rowValue = safeNumber(row[key])
+    const winnerValue = safeNumber(winner[key])
+    return (isLowerBetter ? rowValue < winnerValue : rowValue > winnerValue) ? row : winner
+  }, usable[0])
   const prior = current ? usable.filter(r => r.mes !== current.mes) : []
   const avg = prior.length ? prior.reduce((sum, r) => sum + safeNumber(r[key]), 0) / prior.length : 0
   const vsAverage = avg > 0 ? ((safeNumber(current?.[key]) / avg) - 1) * 100 : null
-  const rank = current ? [...usable].sort((a, b) => safeNumber(b[key]) - safeNumber(a[key])).findIndex(r => r.mes === current.mes) + 1 : null
+  const rank = current ? [...usable].sort((a, b) => isLowerBetter ? safeNumber(a[key]) - safeNumber(b[key]) : safeNumber(b[key]) - safeNumber(a[key])).findIndex(r => r.mes === current.mes) + 1 : null
 
   return {
     bestMonth: best.mes,
