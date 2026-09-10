@@ -109,7 +109,7 @@ export function Overview({ data, historical, selectedMonth, loading, theme, feat
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
-          <AccountHistoricalCarousel historical={historical} selectedMonth={selectedMonth} theme={theme} />
+          <AccountHistoricalCarousel historical={historical} campanas={allCampanas} selectedMonth={selectedMonth} theme={theme} />
         </div>
 
         <ChartCard title="Distribución de Inversión" subtitle="Mix por canal" allowLogScale={false}>
