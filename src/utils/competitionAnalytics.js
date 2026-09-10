@@ -173,3 +173,110 @@ export function calculateBenchmarkVariation(value, benchmark) {
 export function normalizePlatformKey(value) {
   return normalizePlatform(value)
 }
+
+export function normalizeCompetitorId(value) {
+  return normalizeText(value)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Share of voice — participación de la marca sobre el total de la categoría
+// (todos los competidores + la marca) para el mes seleccionado.
+// ─────────────────────────────────────────────────────────────────────────────
+function dedupeCompetitorRows(rows = []) {
+  const deduped = new Map()
+  for (const row of rows) {
+    const key = normalizeText(row?.competidor)
+    if (!key) continue
+    // Keep the last record if the source has accidental duplicate rows.
+    deduped.set(key, row)
+  }
+  return [...deduped.values()]
+}
+
+export function calculateShareOfVoice(currentRows = [], brandAliases) {
+  const rows = dedupeCompetitorRows(currentRows)
+
+  const sum = (field) => rows.reduce((acc, row) => {
+    const n = Number(row?.[field])
+    return acc + (Number.isFinite(n) ? n : 0)
+  }, 0)
+
+  const totalPosts = sum('posts')
+  const totalInteraction = sum('interaccion')
+
+  const brandRow = rows.find(row => isMainBrand(row, brandAliases)) || null
+  const brandPosts = Number(brandRow?.posts)
+  const brandInteraction = Number(brandRow?.interaccion)
+
+  const postsShare = totalPosts > 0 && Number.isFinite(brandPosts) ? (brandPosts / totalPosts) * 100 : null
+  const interactionShare = totalInteraction > 0 && Number.isFinite(brandInteraction) ? (brandInteraction / totalInteraction) * 100 : null
+
+  return {
+    postsShare,
+    interactionShare,
+    totalPosts,
+    totalInteraction,
+    brandPosts: Number.isFinite(brandPosts) ? brandPosts : null,
+    brandInteraction: Number.isFinite(brandInteraction) ? brandInteraction : null,
+    competitorsCount: rows.length,
+    hasBrand: Boolean(brandRow),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Histórico de competencia — series mensuales configurables por competidor.
+// Regla de coherencia: se elige UNA métrica a la vez (misma unidad para todas
+// las líneas) y N competidores sobre esa métrica, para que las líneas del
+// gráfico siempre sean comparables entre sí.
+// ─────────────────────────────────────────────────────────────────────────────
+const HISTORY_PALETTE = ['#22d3ee', '#a78bfa', '#f43f5e', '#34d399', '#facc15', '#60a5fa', '#fb7185', '#c084fc', '#4ade80', '#f97316']
+
+export function buildCompetitionHistorySeries({ rows = [], platform, metricKey, brandAliases, maxMonths = 12, endMonth = null, brandColor = '#f59e0b' }) {
+  const platformKey = normalizePlatform(platform)
+  const platformRows = (rows || []).filter(row =>
+    normalizePlatform(row?.red) === platformKey && row?.competidor && (!endMonth || String(row?.mes) <= String(endMonth))
+  )
+
+  // Identifica competidores distintos (por nombre normalizado), conservando la
+  // última etiqueta visible que haya usado el analista en el Sheet.
+  const byId = new Map()
+  for (const row of platformRows) {
+    const id = normalizeText(row.competidor)
+    if (!id) continue
+    const existing = byId.get(id)
+    if (!existing || String(row.mes) >= String(existing.mes)) {
+      byId.set(id, { id, label: row.competidor, isBrand: isMainBrand(row, brandAliases), mes: row.mes })
+    }
+  }
+
+  let paletteIdx = 0
+  const competitors = [...byId.values()]
+    .sort((a, b) => (a.isBrand === b.isBrand ? a.label.localeCompare(b.label) : a.isBrand ? -1 : 1))
+    .map((c) => ({
+      id: c.id,
+      label: c.label,
+      isBrand: c.isBrand,
+      color: c.isBrand ? brandColor : HISTORY_PALETTE[(paletteIdx++) % HISTORY_PALETTE.length],
+    }))
+
+  const months = [...new Set(platformRows.map(row => row.mes))].filter(Boolean).sort().slice(-maxMonths)
+
+  const valueByKey = new Map()
+  for (const row of platformRows) {
+    const id = normalizeText(row.competidor)
+    if (!id) continue
+    const value = Number(row?.[metricKey])
+    if (Number.isFinite(value)) valueByKey.set(`${row.mes}::${id}`, value)
+  }
+
+  const series = months.map(mes => {
+    const point = { mes }
+    for (const c of competitors) {
+      const value = valueByKey.get(`${mes}::${c.id}`)
+      point[c.id] = value !== undefined ? value : null
+    }
+    return point
+  })
+
+  return { competitors, series, months }
+}
