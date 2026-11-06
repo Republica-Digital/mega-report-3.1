@@ -3,6 +3,8 @@ import Papa from 'papaparse'
 import { normalizeImageUrl } from '../utils/urls'
 import { enrichCampaign } from '../utils/campaigns'
 import { processSheet } from '../utils/sheetDataParser'
+import { BRAND_DISPLAY_NAMES } from '../utils/brands'
+import { getBrandAliases, isMainBrand } from '../utils/competitionAnalytics'
 
 const SHEET_ID = import.meta.env.VITE_SHEET_ID
 
@@ -255,7 +257,7 @@ export function useSheetData(marcaId) {
         fetchSheet('TopPosts'),
         fetchSheet('Sentiment'),
         fetchSheet('Sentiment_Capturas').catch(() => []),
-        fetchSheet('Competencia').catch(() => []),
+        fetchSheet('competencia').catch(() => fetchSheet('Competencia').catch(() => [])),
         fetchSheet('Hallazgos').catch(() => []),
         fetchSheet('Observaciones').catch(() => []),
         fetchSheet('Proyecciones').catch(() => []),
@@ -276,7 +278,13 @@ export function useSheetData(marcaId) {
       const gadsNorm = normalizeRows(smartNormalize(gadsData))
       const sentNorm = normalizeRows(smartNormalize(sentimentData))
       const captNorm = normalizeCapturas(capturasData)
+      const competitionBrandName = BRAND_DISPLAY_NAMES[marcaId]
+      const competitionBrandAliases = getBrandAliases(marcaId, brand?.nombre)
       const compNorm = normalizeRows(smartNormalize(competenciaData))
+        .filter(row => row.marca === marcaId)
+        .map(row => competitionBrandName && isMainBrand(row, competitionBrandAliases)
+          ? { ...row, competidor: competitionBrandName }
+          : row)
       const hallNorm = normalizeRows(smartNormalize(hallazgosData))
       const obsNorm  = normalizeRows(smartNormalize(observacionesData))
       const gadsCiudNorm = normalizeRows(smartNormalize(gadsCiudadesData))
@@ -324,7 +332,7 @@ export function useSheetData(marcaId) {
         topPosts: postNorm.filter(r => r.marca === marcaId),
         sentiment: sentNorm.filter(r => r.marca === marcaId),
         sentimentCapturas: captNorm.filter(r => r.marca === marcaId),
-        competencia: compNorm.filter(r => r.marca === marcaId),
+        competencia: compNorm,
         hallazgos: hallNorm.filter(r => r.marca === marcaId),
         observaciones: obsNorm.filter(r => r.marca === marcaId),
         proyecciones: proyNorm.filter(r => r.marca === marcaId),
