@@ -1,3 +1,5 @@
+import { BRAND_DISPLAY_NAMES } from './brands.js'
+
 export const COMPETITION_METRICS = [
   { key: 'seguidores', label: 'Seguidores', type: 'number' },
   { key: 'crecimiento_pct', label: 'Crecimiento de comunidad', type: 'percent' },
@@ -74,7 +76,9 @@ export function formatRankingValue(value, metric) {
 }
 
 export function getBrandAliases(brandId, brandName) {
-  return new Set([normalizeText(brandId), normalizeText(brandName)].filter(Boolean))
+  const names = [brandId, brandName, BRAND_DISPLAY_NAMES[brandId]]
+  if (brandId === 'pacific') names.push('Pacific Mix Clam')
+  return new Set(names.map(normalizeText).filter(Boolean))
 }
 
 export function isMainBrand(row, brandAliases) {
