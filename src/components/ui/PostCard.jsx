@@ -1,13 +1,12 @@
-import { Heart, Eye, Play, Trophy, Sparkles, Lightbulb, ChevronLeft, ChevronRight, ExternalLink, Image as ImageIcon, Loader, AlertCircle } from 'lucide-react'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { Heart, Eye, Play, Trophy, Sparkles, Lightbulb, ChevronLeft, ChevronRight, ExternalLink, Image as ImageIcon, Loader } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { formatNumber } from '../../utils/format'
 import { isNullishString, classifyEmbed, extractLinkFromEmbed, detectPlatform } from '../../utils/urls'
 
 const EMBED_MIN_HEIGHT = 300
 const EMBED_MAX_HEIGHT = 520
-const EMBED_HEIGHT = EMBED_MIN_HEIGHT // usado por los estados de carga/error/imagen dentro del embed
-const FACEBOOK_EMBED_WIDTH = 320
-const FACEBOOK_SDK_URL = 'https://connect.facebook.net/es_LA/sdk.js#xfbml=1&version=v18.0'
+const EMBED_HEIGHT = EMBED_MIN_HEIGHT
+const FACEBOOK_SDK_URL = 'https://connect.facebook.net/es_LA/sdk.js#xfbml=1&version=v25.0'
 
 const PLATFORM_STYLES = {
   facebook:  { gradient: 'from-blue-500 to-blue-700',                bg: 'rgba(59,130,246,0.15)',  border: 'rgba(59,130,246,0.35)',  label: 'Facebook' },
@@ -83,261 +82,260 @@ function ensureFacebookSdk() {
   return facebookSdkPromise
 }
 
-function normalizeFacebookEmbed(container) {
-  if (!container) return
-  const width = Math.min(container.clientWidth || FACEBOOK_EMBED_WIDTH, FACEBOOK_EMBED_WIDTH)
-
-  container.querySelectorAll('.fb-post, .fb-video').forEach(node => {
-    node.setAttribute('data-width', String(width))
-    node.setAttribute('data-show-text', 'true')
-    node.style.width = '100%'
-    node.style.maxWidth = `${FACEBOOK_EMBED_WIDTH}px`
-    node.style.margin = '0 auto'
-  })
-
-  container.querySelectorAll('iframe').forEach(iframe => {
-    const src = iframe.getAttribute('src') || ''
-    if (!src.includes('facebook.com/plugins/')) return
-
-    try {
-      const parsed = new URL(src)
-      parsed.searchParams.set('width', String(width))
-      parsed.searchParams.set('show_text', 'true')
-      iframe.setAttribute('src', parsed.toString())
-    } catch {}
-
-    iframe.setAttribute('width', String(width))
-    iframe.style.width = '100%'
-    iframe.style.maxWidth = `${FACEBOOK_EMBED_WIDTH}px`
-    iframe.style.margin = '0 auto'
-    iframe.style.background = '#fff'
-    iframe.style.borderRadius = '10px'
-  })
+function getFacebookPlugin(html) {
+  const src = html.match(/\bsrc\s*=\s*["']([^"']+)/i)?.[1]
+  if (!src) return null
+  try {
+    const plugin = new URL(src.replace(/&amp;/gi, '&'))
+    if (plugin.protocol !== 'https:' || !/(^|\.)facebook\.com$/i.test(plugin.hostname)) return null
+    if (!/^\/plugins\/(post|video)\.php$/.test(plugin.pathname)) return null
+    const url = new URL(plugin.searchParams.get('href'))
+    if (!/^https?:$/.test(url.protocol) || !/(^|\.)(facebook\.com|fb\.com|fb\.watch)$/i.test(url.hostname)) return null
+    return { url: url.href, isVideo: plugin.pathname.endsWith('/video.php') }
+  } catch {
+    return null
+  }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Universal HTML Embed — accepts ANY embed code pasted into embed_url.
-// Scales iframes to fit the container by setting width=100% and preserving
-// aspect ratio. Supports Instagram, Facebook, TikTok, YouTube, plain iframes.
-// ─────────────────────────────────────────────────────────────────────────────
-function UniversalEmbed({ html, platform, onFail }) {
-  const ref = useRef(null)
-  const [loading, setLoading] = useState(true)
-  const [failed, setFailed] = useState(false)
-  const isFacebookEmbed = platform === 'facebook' || String(html || '').toLowerCase().includes('facebook')
+function getTikTokPostId(value) {
+  return value.match(/\bdata-video-id\s*=\s*["'](\d+)["']/i)?.[1]
+    || value.match(/https?:\/\/(?:[\w-]+\.)?tiktok\.com\/(?:@[^/"'\s]+\/(?:video|photo)\/|player\/v1\/|embed\/v2\/)(\d+)/i)?.[1]
+}
 
-  useEffect(() => {
-    if (!html || !ref.current) return
-    ref.current.innerHTML = html
-    if (isFacebookEmbed) normalizeFacebookEmbed(ref.current)
+function getInstagramPostUrl(value) {
+  return value.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv)\/[\w-]+/i)?.[0]
+}
 
-    // Normalize any iframe inside the embed: fill parent & keep aspect.
-    const iframes = ref.current.querySelectorAll('iframe')
-    iframes.forEach(iframe => {
-      iframe.style.maxWidth = '100%'
-      iframe.style.width = '100%'
-      iframe.style.border = '0'
-      iframe.style.display = 'block'
-      iframe.setAttribute('loading', 'lazy')
-      // Hide scrolling artefacts
-      iframe.setAttribute('scrolling', 'no')
-      // If height is explicit, keep it; otherwise fill container
-      if (!iframe.style.height && !iframe.getAttribute('height')) {
-        iframe.style.height = '100%'
+let instagramSdkPromise = null
+
+function ensureInstagramSdk() {
+  if (window.instgrm?.Embeds) return Promise.resolve(window.instgrm.Embeds)
+  if (!instagramSdkPromise) {
+    instagramSdkPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      const fail = () => {
+        clearTimeout(timeout)
+        script.remove()
+        reject(new Error('Instagram embed unavailable'))
       }
-      // Detect if the iframe src is a Meta business preview link (requires login)
-      const src = iframe.getAttribute('src') || ''
-      if (src.includes('business.facebook.com/ads/api/preview_iframe')) {
-        setFailed(true)
-        onFail?.()
-      }
+      const timeout = setTimeout(fail, 5000)
+      script.addEventListener('load', () => {
+        const embeds = window.instgrm?.Embeds
+        if (!embeds) { fail(); return }
+        clearTimeout(timeout)
+        resolve(embeds)
+      }, { once: true })
+      script.addEventListener('error', fail, { once: true })
+      script.src = 'https://www.instagram.com/embed.js'
+      script.async = true
+      document.body.appendChild(script)
+    }).catch(error => {
+      instagramSdkPromise = null
+      throw error
     })
-
-    // Load platform-specific SDK when needed
-    const loadScript = (id, src, cb) => {
-      if (document.getElementById(id)) { cb?.(); return }
-      const s = document.createElement('script')
-      s.id = id; s.src = src; s.async = true
-      s.onload = cb
-      s.onerror = () => { setFailed(true); onFail?.() }
-      document.body.appendChild(s)
-    }
-
-    const lc = html.toLowerCase()
-    if (lc.includes('instagram') || platform === 'instagram') {
-      loadScript('ig-embed', 'https://www.instagram.com/embed.js', () => {
-        try { window.instgrm?.Embeds?.process(ref.current) } catch {}
-        setLoading(false)
-      })
-    } else if (lc.includes('tiktok') || platform === 'tiktok') {
-      reloadTikTokEmbeds(
-        () => setLoading(false),
-        () => { setFailed(true); onFail?.() }
-      )
-    } else if (lc.includes('fb-post') || lc.includes('fb-video') || lc.includes('connect.facebook.net') || isFacebookEmbed) {
-      ensureFacebookSdk().then(() => {
-        normalizeFacebookEmbed(ref.current)
-        try { window.FB?.XFBML?.parse(ref.current) } catch {}
-        window.setTimeout(() => normalizeFacebookEmbed(ref.current), 300)
-        setLoading(false)
-      }).catch(() => { setFailed(true); onFail?.() })
-    } else {
-      setLoading(false)
-    }
-
-    const timeout = setTimeout(() => setLoading(false), 4000)
-    return () => clearTimeout(timeout)
-  }, [html, platform, isFacebookEmbed])
-
-  if (failed) {
-    return (
-      <div className="relative bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-xl overflow-hidden flex items-center justify-center p-6" style={{ minHeight: EMBED_HEIGHT }}>
-        <div className="text-center max-w-sm">
-          <AlertCircle className="w-10 h-10 text-amber-400/80 mx-auto mb-3" />
-          <p className="text-white/80 text-sm font-semibold mb-2">Vista previa no disponible</p>
-          <p className="text-white/50 text-xs">
-            Este post no se puede mostrar aquí directamente. Consulta la publicación original en la plataforma correspondiente.
-          </p>
-        </div>
-      </div>
-    )
   }
+  return instagramSdkPromise
+}
 
+function EmbedLoader() {
   return (
-    <div
-      className="relative flex justify-center"
-      style={{ minHeight: loading ? EMBED_HEIGHT : undefined }}
-    >
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10">
-          <Loader className="w-6 h-6 text-white/40 animate-spin" />
-        </div>
-      )}
-      <div
-        ref={ref}
-        className="flex min-w-0 w-full items-start justify-center"
-        style={{
-          maxWidth: isFacebookEmbed ? FACEBOOK_EMBED_WIDTH : undefined,
-        }}
-      />
+    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+      <Loader className="h-6 w-6 animate-spin text-white/40" aria-label="Cargando publicación" />
     </div>
   )
 }
 
-// URL → Embed (IG/FB/TT public URLs get converted to proper iframes)
 function FacebookUrlEmbed({ url, isVideo, onFail }) {
   const ref = useRef(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!url || !ref.current) return
-    setLoading(true)
-    ref.current.innerHTML = `
-      <div
-        class="${isVideo ? 'fb-video' : 'fb-post'}"
-        data-href="${url}"
-        data-width="${FACEBOOK_EMBED_WIDTH}"
-        data-show-text="true"
-      ></div>
-    `
+    const container = ref.current
+    let active = true
+    let resizeTimer
+    let loadTimer
+    let width
+    const renderEmbed = () => {
+      const nextWidth = Math.floor(container.clientWidth)
+      if (!nextWidth || nextWidth === width) return
+      width = nextWidth
+      setLoading(true)
+      clearTimeout(loadTimer)
+      loadTimer = setTimeout(onFail, 8000)
+      const post = document.createElement('div')
+      post.className = isVideo ? 'fb-video' : 'fb-post'
+      post.dataset.href = url
+      post.dataset.width = String(width)
+      post.dataset.showText = 'true'
+      container.replaceChildren(post)
 
-    normalizeFacebookEmbed(ref.current)
-    ensureFacebookSdk().then(() => {
-      try { window.FB?.XFBML?.parse(ref.current) } catch {}
-      window.setTimeout(() => normalizeFacebookEmbed(ref.current), 300)
-      setLoading(false)
-    }).catch(() => {
-      setLoading(false)
-      onFail?.()
+      ensureFacebookSdk().then(fb => {
+        if (!active || !container.contains(post)) return
+        if (!fb?.XFBML?.parse) throw new Error('Facebook embed unavailable')
+        fb.XFBML.parse(container, () => {
+          if (!active || !container.contains(post)) return
+          clearTimeout(loadTimer)
+          if (post.querySelector('iframe')) setLoading(false)
+          else onFail()
+        })
+      }).catch(() => {
+        if (active && container.contains(post)) onFail()
+      })
+    }
+
+    renderEmbed()
+    const observer = new ResizeObserver(() => {
+      if (Math.floor(container.clientWidth) === width) return
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(renderEmbed, 150)
     })
+    observer.observe(container)
+    return () => {
+      active = false
+      clearTimeout(resizeTimer)
+      clearTimeout(loadTimer)
+      observer.disconnect()
+      container.replaceChildren()
+    }
   }, [url, isVideo, onFail])
 
   return (
-    <div className="relative flex justify-center" style={{ minHeight: loading ? EMBED_HEIGHT : undefined }}>
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10">
-          <Loader className="w-6 h-6 text-zinc-500 animate-spin" />
-        </div>
-      )}
-      <div
-        ref={ref}
-        className="flex min-w-0 w-full items-start justify-center"
-        style={{ maxWidth: FACEBOOK_EMBED_WIDTH }}
-      />
+    <div className="relative mx-auto w-full max-w-[350px]" style={{ minHeight: loading ? EMBED_HEIGHT : undefined }}>
+      {loading && <EmbedLoader />}
+      <div ref={ref} className="w-full [&_iframe]:max-w-full" />
     </div>
   )
 }
 
-function UrlEmbed({ url, type, isVideo, onFail }) {
-  const [loading, setLoading] = useState(true)
+function InstagramEmbed({ url, captioned, onFail }) {
   const ref = useRef(null)
-
-  const embedSrc = useMemo(() => {
-    if (type === 'ig_url') {
-      const clean = url.split('?')[0].replace(/\/$/, '')
-      return `${clean}/embed`
-    }
-    return null
-  }, [url, type])
+  const [mode, setMode] = useState('loading')
 
   useEffect(() => {
-    if (type !== 'tt_url' || !ref.current) return
-    setLoading(true)
-    const videoId = url.match(/video\/(\d+)/)?.[1]
-    if (!videoId) { onFail?.(); return }
-    ref.current.innerHTML = `
-      <blockquote class="tiktok-embed" cite="${url}" data-video-id="${videoId}" style="max-width:380px;min-width:280px;margin:0;">
-        <section></section>
-      </blockquote>
-    `
-    reloadTikTokEmbeds(() => setLoading(false), onFail)
-  }, [url, type])
+    const container = ref.current
+    let active = true
+    const blockquote = document.createElement('blockquote')
+    blockquote.className = 'instagram-media'
+    blockquote.dataset.instgrmPermalink = url + '/'
+    blockquote.dataset.instgrmVersion = '14'
+    blockquote.style.margin = '0'
+    blockquote.style.minWidth = '0'
+    if (captioned) blockquote.dataset.instgrmCaptioned = ''
+    container.replaceChildren(blockquote)
 
-  if (type === 'tt_url') {
-    return (
-      <div className="relative flex items-start justify-center" style={{ minHeight: loading ? EMBED_HEIGHT : undefined }}>
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center z-10">
-            <Loader className="w-6 h-6 text-white/40 animate-spin" />
-          </div>
-        )}
-        <div ref={ref} className="flex w-full min-w-0 justify-center" />
-      </div>
-    )
-  }
+    let iframe
+    const fallback = () => {
+      if (!active) return
+      active = false
+      clearTimeout(timeout)
+      observer.disconnect()
+      container.replaceChildren()
+      setMode('direct')
+    }
+    const observer = new MutationObserver(() => {
+      iframe = container.querySelector('iframe')
+      if (!iframe) return
+      clearTimeout(timeout)
+      observer.disconnect()
+      iframe.addEventListener('error', fallback, { once: true })
+      setMode('ready')
+    })
+    observer.observe(container, { childList: true, subtree: true })
+    const timeout = setTimeout(fallback, 6500)
 
-  if (type === 'fb_url') {
-    return <FacebookUrlEmbed url={url} isVideo={isVideo} onFail={onFail} />
-  }
+    ensureInstagramSdk().then(embeds => {
+      if (active) embeds.process()
+    }).catch(fallback)
 
-  if (!embedSrc) return null
+    return () => {
+      active = false
+      clearTimeout(timeout)
+      observer.disconnect()
+      iframe?.removeEventListener('error', fallback)
+      container.replaceChildren()
+    }
+  }, [url, captioned])
 
+  const isReel = /\/(reels?|tv)\//i.test(url)
   return (
-    <div
-      className="relative flex justify-center"
-      style={{ minHeight: loading ? EMBED_HEIGHT : undefined }}
-    >
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10">
-          <Loader className="w-6 h-6 text-white/40 animate-spin" />
-        </div>
+    <div className="relative mx-auto w-full max-w-[390px] [&_iframe]:!min-w-0 [&_iframe]:max-w-full"
+      style={{ minHeight: mode === 'loading' ? EMBED_HEIGHT : undefined }}>
+      {mode === 'loading' && <EmbedLoader />}
+      <div ref={ref} className={mode === 'loading' ? 'invisible w-full' : 'w-full'} />
+      {mode === 'direct' && (
+        <iframe
+          src={url + '/embed/' + (captioned ? 'captioned/' : '')}
+          title="Vista previa de Instagram"
+          className="block w-full border-0"
+          style={{ aspectRatio: isReel ? '4 / 9' : '4 / 7' }}
+          allowFullScreen
+          allow="encrypted-media; fullscreen; picture-in-picture"
+          onError={onFail}
+        />
       )}
-      <iframe
-        src={embedSrc}
-        title="Vista previa de Instagram"
-        className="border-0"
-        style={{
-          height: isVideo ? EMBED_MAX_HEIGHT : 400,
-          width: '100%',
-        }}
-        scrolling="no"
-        allowFullScreen
-        allow="autoplay; clipboard-write; encrypted-media; picture-in-picture"
-        onLoad={() => setLoading(false)}
-        onError={() => onFail?.()}
-      />
     </div>
   )
+}
+
+function TikTokPlayer({ postId, onFail }) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handleMessage = event => {
+      if (event.origin === 'https://www.tiktok.com' && event.source === ref.current?.contentWindow
+        && event.data?.['x-tiktok-player'] === true && event.data?.type === 'onPlayerError') {
+        onFail()
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [onFail])
+
+  return (
+    <iframe
+      ref={ref}
+      src={'https://www.tiktok.com/player/v1/' + postId + '?description=1&music_info=1'}
+      title="Reproductor de TikTok"
+      className="mx-auto block aspect-[9/16] w-full border-0"
+      style={{ maxWidth: 'min(300px, max(190px, 34svh))' }}
+      loading="lazy"
+      allow="encrypted-media; fullscreen; picture-in-picture"
+      allowFullScreen
+      onError={onFail}
+    />
+  )
+}
+
+// Keep older or nonstandard pasted embeds available when they have no platform ID.
+function UniversalEmbed({ html, platform, onFail }) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const container = ref.current
+    let active = true
+    container.innerHTML = html
+    container.querySelectorAll('iframe').forEach(iframe => {
+      iframe.style.maxWidth = '100%'
+      iframe.style.border = '0'
+      iframe.style.display = 'block'
+      iframe.setAttribute('loading', 'lazy')
+    })
+
+    const fail = () => { if (active) onFail() }
+    if (container.querySelector('.instagram-media')) {
+      ensureInstagramSdk().then(embeds => { if (active) embeds.process() }).catch(fail)
+    } else if (container.querySelector('.fb-post, .fb-video')) {
+      ensureFacebookSdk().then(fb => { if (active) fb?.XFBML?.parse(container) }).catch(fail)
+    } else if (platform === 'tiktok' && container.querySelector('.tiktok-embed')) {
+      reloadTikTokEmbeds(() => {}, fail)
+    }
+    return () => {
+      active = false
+      container.replaceChildren()
+    }
+  }, [html, platform, onFail])
+
+  return <div ref={ref} className="mx-auto flex w-full min-w-0 justify-center [&_iframe]:!min-w-0" />
 }
 
 // Image fallback
@@ -388,18 +386,32 @@ function Placeholder({ platform, isVideo }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PostPreview — smart fallback chain
 // ─────────────────────────────────────────────────────────────────────────────
-function PostPreview({ post, platform, isVideo, embedInfo }) {
+function PostPreview({ post, platform, isVideo, embedInfo, facebookPlugin }) {
+  const [nativeFailed, setNativeFailed] = useState(false)
   const [embedFailed, setEmbedFailed] = useState(false)
   const [imgFailed, setImgFailed] = useState(false)
-  const hasImage = !isNullishString(post.imagen_url) && !imgFailed
+  const failNative = useCallback(() => setNativeFailed(true), [])
+  const failEmbed = useCallback(() => setEmbedFailed(true), [])
+  const value = embedInfo.value || ''
+  const instagramUrl = platform === 'instagram' ? getInstagramPostUrl(value) : null
 
-  if (!embedFailed && embedInfo.type === 'html_embed') {
-    return <UniversalEmbed html={embedInfo.value} platform={platform} onFail={() => setEmbedFailed(true)} />
+  if (!nativeFailed) {
+    if (platform === 'tiktok') {
+      const postId = getTikTokPostId(value)
+      if (postId) return <TikTokPlayer postId={postId} onFail={failNative} />
+    }
+    if (instagramUrl) {
+      return <InstagramEmbed url={instagramUrl} captioned={/\bdata-instgrm-captioned\b/i.test(value)} onFail={failNative} />
+    }
+    if (facebookPlugin || embedInfo.type === 'fb_url') {
+      const url = facebookPlugin?.url || value
+      return <FacebookUrlEmbed url={url} isVideo={facebookPlugin?.isVideo ?? isVideo} onFail={failNative} />
+    }
   }
-  if (!embedFailed && ['ig_url', 'fb_url', 'tt_url'].includes(embedInfo.type)) {
-    return <UrlEmbed url={embedInfo.value} type={embedInfo.type} isVideo={isVideo} onFail={() => setEmbedFailed(true)} />
+  if (!embedFailed && !instagramUrl && embedInfo.type === 'html_embed') {
+    return <UniversalEmbed html={value} platform={platform} onFail={failEmbed} />
   }
-  if (hasImage) {
+  if (!isNullishString(post.imagen_url) && !imgFailed) {
     return <ImagePreview src={post.imagen_url} isVideo={isVideo} onFail={() => setImgFailed(true)} />
   }
   return <Placeholder platform={platform} isVideo={isVideo} />
@@ -455,9 +467,12 @@ const METRICS = Object.values(TYPE_LABELS).map(({ metric, label, icon }) => ({ m
 
 function PostSlide({ slide, platform, group }) {
   const { post, label, isOpportunity } = slide
-  const isVideo = platform === 'tiktok' || /video|reel|fb-video|facebook\.com\/watch/i.test([post.tipo, post.embed_url].join(' '))
+  const isVideo = platform === 'tiktok' || /video|reel|fb-video|facebook\.com\/watch|fb\.watch|facebook\.com\/share\/[rv]\//i.test([post.tipo, post.embed_url].join(' '))
   const embedInfo = classifyEmbed(post.embed_url)
-  const linkUrl = extractLinkFromEmbed(post.embed_url)
+  const facebookPlugin = platform === 'facebook' && embedInfo.type === 'html_embed'
+    ? getFacebookPlugin(embedInfo.value)
+    : null
+  const linkUrl = facebookPlugin?.url || extractLinkFromEmbed(post.embed_url)
   const BadgeIcon = isOpportunity ? Lightbulb : Sparkles
   const badgeStyle = isOpportunity
     ? 'border-cyan-300/25 bg-cyan-400/10 text-cyan-200'
@@ -483,9 +498,9 @@ function PostSlide({ slide, platform, group }) {
         )}
       </div>
 
-      <div className="mx-4 overflow-x-hidden overflow-y-auto rounded-xl border border-white/10 bg-black/25"
-        style={{ maxHeight: EMBED_MAX_HEIGHT }}>
-        <PostPreview post={post} platform={platform} isVideo={isVideo} embedInfo={embedInfo} />
+      <div className="mx-4 overflow-hidden rounded-xl border border-white/10 bg-black/25">
+        <PostPreview post={post} platform={platform} isVideo={isVideo}
+          embedInfo={embedInfo} facebookPlugin={facebookPlugin} />
       </div>
 
       <div className="space-y-3 p-4">
