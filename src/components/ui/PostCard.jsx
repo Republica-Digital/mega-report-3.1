@@ -103,7 +103,8 @@ function getTikTokPostId(value) {
 }
 
 function getInstagramPostUrl(value) {
-  return value.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv)\/[\w-]+/i)?.[0]
+  const permalink = value.match(/\bdata-instgrm-permalink\s*=\s*["']([^"']+)/i)?.[1] || value
+  return permalink.match(/https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv)\/[\w-]+/i)?.[0]
 }
 
 let instagramSdkPromise = null
@@ -224,21 +225,29 @@ function InstagramEmbed({ url, captioned, onFail }) {
     container.replaceChildren(blockquote)
 
     let iframe
+    const reveal = () => {
+      if (!active || !iframe || iframe.offsetHeight <= 150) return
+      clearTimeout(timeout)
+      frameObserver.disconnect()
+      setMode('ready')
+    }
+    const frameObserver = new ResizeObserver(reveal)
     const fallback = () => {
       if (!active) return
       active = false
       clearTimeout(timeout)
       observer.disconnect()
+      frameObserver.disconnect()
       container.replaceChildren()
       setMode('direct')
     }
     const observer = new MutationObserver(() => {
       iframe = container.querySelector('iframe')
       if (!iframe) return
-      clearTimeout(timeout)
       observer.disconnect()
       iframe.addEventListener('error', fallback, { once: true })
-      setMode('ready')
+      frameObserver.observe(iframe)
+      reveal()
     })
     observer.observe(container, { childList: true, subtree: true })
     const timeout = setTimeout(fallback, 6500)
@@ -251,6 +260,7 @@ function InstagramEmbed({ url, captioned, onFail }) {
       active = false
       clearTimeout(timeout)
       observer.disconnect()
+      frameObserver.disconnect()
       iframe?.removeEventListener('error', fallback)
       container.replaceChildren()
     }
@@ -465,6 +475,44 @@ function groupTopPosts(posts) {
 
 const METRICS = Object.values(TYPE_LABELS).map(({ metric, label, icon }) => ({ metric, label, icon }))
 
+function FittedPreview({ children }) {
+  const contentRef = useRef(null)
+  const limitRef = useRef(null)
+  const [fit, setFit] = useState(null)
+
+  useEffect(() => {
+    const content = contentRef.current
+    const limit = limitRef.current
+    const measure = () => {
+      const height = content.offsetHeight
+      const available = limit.offsetHeight
+      const scale = height > available && available > 0 ? available / height : 1
+      setFit(previous => {
+        if (scale === 1) return null
+        if (previous?.scale === scale && previous.height === available) return previous
+        return { height: available, scale }
+      })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(content)
+    observer.observe(limit)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div className="relative min-w-0 overflow-hidden rounded-xl border border-white/10 bg-black/25"
+      style={{ height: fit ? fit.height + 2 : undefined }}>
+      <div ref={limitRef} aria-hidden="true" className="pointer-events-none invisible absolute w-px"
+        style={{ height: 'clamp(300px, calc(100svh - 215px), 540px)' }} />
+      <div ref={contentRef} className="origin-top"
+        style={{ transform: fit ? 'scale(' + fit.scale + ')' : undefined }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function PostSlide({ slide, platform, group }) {
   const { post, label, isOpportunity } = slide
   const isVideo = platform === 'tiktok' || /video|reel|fb-video|facebook\.com\/watch|fb\.watch|facebook\.com\/share\/[rv]\//i.test([post.tipo, post.embed_url].join(' '))
@@ -498,32 +546,35 @@ function PostSlide({ slide, platform, group }) {
         )}
       </div>
 
-      <div className="mx-4 overflow-hidden rounded-xl border border-white/10 bg-black/25">
-        <PostPreview post={post} platform={platform} isVideo={isVideo}
-          embedInfo={embedInfo} facebookPlugin={facebookPlugin} />
-      </div>
-
-      <div className="space-y-3 p-4">
-        {!!metrics.length && (
-          <dl className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl bg-white/5 px-4 py-3">
-            {metrics.map(({ metric, label: metricLabel, value, icon: Icon }, index) => (
-              <div key={metric} className="min-w-0">
-                <dt className="flex items-center gap-1.5 text-xs text-white/65">
-                  <Icon className="h-3.5 w-3.5" aria-hidden="true" /> {metricLabel}
-                </dt>
-                <dd className={index === 0 ? 'text-xl font-bold text-white' : 'text-base font-semibold text-white/80'}>
-                  {formatNumber(value)}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        {!isNullishString(post.descripcion) && (
-          <div className="rounded-r-xl border-l-2 border-violet-400/70 bg-violet-400/10 px-4 py-3">
-            <h5 className="text-xs font-bold text-violet-200">Hallazgo del post</h5>
-            <p className="mt-1 whitespace-pre-line break-words text-sm leading-relaxed text-white/85">{post.descripcion}</p>
-          </div>
-        )}
+      <div className="grid items-start gap-4 px-4 pb-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-3 lg:col-start-2 lg:row-start-1">
+          {!!metrics.length && (
+            <dl className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl bg-white/5 px-4 py-3">
+              {metrics.map(({ metric, label: metricLabel, value, icon: Icon }, index) => (
+                <div key={metric} className="min-w-0">
+                  <dt className="flex items-center gap-1.5 text-sm text-white/75">
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" /> {metricLabel}
+                  </dt>
+                  <dd className={index === 0 ? 'text-xl font-bold text-white' : 'text-base font-semibold text-white/80'}>
+                    {formatNumber(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {!isNullishString(post.descripcion) && (
+            <div className="rounded-r-xl border-l-2 border-violet-400/70 bg-violet-400/10 px-4 py-3">
+              <h5 className="text-sm font-bold text-violet-200">Hallazgo del post</h5>
+              <p className="mt-1 whitespace-pre-line break-words text-sm leading-relaxed text-white/85">{post.descripcion}</p>
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+          <FittedPreview>
+            <PostPreview post={post} platform={platform} isVideo={isVideo}
+              embedInfo={embedInfo} facebookPlugin={facebookPlugin} />
+          </FittedPreview>
+        </div>
       </div>
     </>
   )
@@ -540,11 +591,11 @@ function ObjectiveCarousel({ group, platform }) {
 
   return (
     <section aria-label={label} className="glass-card min-w-0 overflow-hidden rounded-2xl">
-      <header className="flex items-start gap-3 border-b border-white/10 px-4 py-4">
+      <header className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-3">
         <span className="rounded-lg border p-2 text-white" style={{ background: style.bg, borderColor: style.border }}>
           <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h4 className="break-words text-base font-bold text-white">{label}</h4>
           <p className="text-xs text-white/65">
             {[
@@ -554,41 +605,40 @@ function ObjectiveCarousel({ group, platform }) {
             ].filter(Boolean).join(' · ')}
           </p>
         </div>
+        {slides.length > 1 && (
+          <nav aria-label={'Publicaciones de ' + label} className="flex flex-wrap items-center justify-center gap-2">
+            <button type="button" aria-label="Publicación anterior" className={arrowStyle}
+              disabled={currentIndex === 0} onClick={() => setActiveIndex(currentIndex - 1)}>
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-center">
+                {slides.map((entry, index) => (
+                  <button key={index} type="button" aria-current={index === currentIndex ? 'true' : undefined}
+                    aria-label={entry.label + ', publicación ' + (index + 1)} title={entry.label}
+                    className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-white/10"
+                    onClick={() => setActiveIndex(index)}>
+                    <span className={[
+                      'block h-2.5 w-2.5',
+                      entry.isOpportunity ? 'rotate-45 rounded-sm bg-cyan-300' : 'rounded-full bg-amber-300',
+                      index === currentIndex ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900' : 'opacity-50',
+                    ].join(' ')} />
+                  </button>
+                ))}
+              </div>
+              <p className="text-center text-[11px] text-white/60" aria-live="polite">
+                {currentIndex + 1} de {slides.length} · {slide.label}
+              </p>
+            </div>
+            <button type="button" aria-label="Siguiente publicación" className={arrowStyle}
+              disabled={currentIndex === slides.length - 1} onClick={() => setActiveIndex(currentIndex + 1)}>
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </nav>
+        )}
       </header>
 
       <PostSlide key={slideKey} slide={slide} platform={platform} group={group} />
-
-      {slides.length > 1 && (
-        <nav aria-label={'Publicaciones de ' + label} className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3">
-          <button type="button" aria-label="Publicación anterior" className={arrowStyle}
-            disabled={currentIndex === 0} onClick={() => setActiveIndex(currentIndex - 1)}>
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center justify-center">
-              {slides.map((entry, index) => (
-                <button key={index} type="button" aria-current={index === currentIndex ? 'true' : undefined}
-                  aria-label={entry.label + ', publicación ' + (index + 1)} title={entry.label}
-                  className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-white/10"
-                  onClick={() => setActiveIndex(index)}>
-                  <span className={[
-                    'block h-2.5 w-2.5',
-                    entry.isOpportunity ? 'rotate-45 rounded-sm bg-cyan-300' : 'rounded-full bg-amber-300',
-                    index === currentIndex ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900' : 'opacity-50',
-                  ].join(' ')} />
-                </button>
-              ))}
-            </div>
-            <p className="text-center text-[11px] text-white/60" aria-live="polite">
-              {currentIndex + 1} de {slides.length} · {slide.label}
-            </p>
-          </div>
-          <button type="button" aria-label="Siguiente publicación" className={arrowStyle}
-            disabled={currentIndex === slides.length - 1} onClick={() => setActiveIndex(currentIndex + 1)}>
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </nav>
-      )}
     </section>
   )
 }
@@ -607,7 +657,8 @@ export function TopPostsSection({ posts = [], platform = 'facebook' }) {
         <Trophy className="h-4 w-4 text-amber-400" aria-hidden="true" />
         <h3 className="text-base font-bold font-display text-white">Top Posts del Mes</h3>
       </div>
-      <div className="grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid max-w-[1500px] items-start gap-4"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 690px), 1fr))' }}>
         {groups.map(group => (
           <ObjectiveCarousel key={periodKey + '|' + group.key} group={group} platform={platformKey} />
         ))}
