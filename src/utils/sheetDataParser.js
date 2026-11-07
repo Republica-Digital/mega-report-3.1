@@ -67,6 +67,7 @@ const fieldAliases = {
   
   // TopPosts
   tipo_top: ['tipotop', 'posttype'],
+  clasificacion: ['clasificacion'],
   descripcion: ['descripcion', 'description', 'texto'],
   embed_url: ['embedurl', 'embed', 'codigoembre', 'iframe'],
   imagen_url: ['imagenurl', 'image'],
